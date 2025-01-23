@@ -4,7 +4,7 @@ use parse_ctanmirrors::{Mirror, Mirrors};
 use reqwest;
 use serde::Serialize;
 use serde_json;
-use std::{collections::HashMap, io::Read, sync::Arc, time::Duration, env};
+use std::{collections::{HashMap, HashSet}, io::Read, sync::Arc, time::Duration, env};
 use tokio::{
     sync::{watch, Notify},
     task::JoinSet,
@@ -53,6 +53,9 @@ enum MirrorData {
     /// # Timeout
     /// Mirror did not answer in a reasonable time.
     Timeout,
+    /// # Excluded
+    /// Mirror is known to be unstable and therefore manually excluded.
+    Excluded,
 }
 
 /// # Map from mirror URL to mirror status
@@ -195,27 +198,36 @@ async fn get_tlpdb(mirror: &str) -> Result<String, Error> {
     Ok(response_text)
 }
 
-async fn process_mirrors(mirrors: Mirrors) -> Result<MirrorsWithData, Error> {
+async fn process_mirrors(mirrors: Mirrors, exclusions: Arc<HashSet<Mirror>>) -> Result<MirrorsWithData, Error> {
     let mappings = Arc::new(TlpdbByHash::new());
     let mut continent_set: JoinSet<Result<(String, ContinentMirrorsWithData), Error>> =
         JoinSet::new();
     for (name, continent_mirrors) in mirrors.0 {
+        let exclusions = exclusions.clone();
         let mappings = mappings.clone();
         continent_set.spawn(async {
+            let exclusions = exclusions;
             let mappings = mappings;
             let mut country_set: JoinSet<Result<(String, CountryMirrorsWithData), Error>> =
                 JoinSet::new();
             for (name, country_mirrors) in continent_mirrors.0 {
+                let exclusions = exclusions.clone();
                 let mappings = mappings.clone();
                 country_set.spawn(async {
+                    let exclusions = exclusions;
                     let mappings = mappings;
                     let mut mirror_set: JoinSet<(Mirror, MirrorData)> = JoinSet::new();
                     for mirror in country_mirrors.0 {
+                        let exclusions = exclusions.clone();
                         let mappings = mappings.clone();
                         mirror_set.spawn(async {
+                            let exclusions = exclusions;
                             let mappings = mappings;
                             let mirror = mirror;
                             let tl_mirror = Mirror(format!("{}systems/texlive/tlnet/", mirror.0));
+                            if exclusions.contains(&mirror) {
+                                return (tl_mirror, MirrorData::Excluded)
+                            }
                             if let Ok(result) = timeout(Duration::from_secs(15), async {
                                 let hash = get_tlpdb_hash(&tl_mirror.0).await;
                                 if let Ok(hash) = hash {
@@ -257,7 +269,9 @@ async fn process_mirrors(mirrors: Mirrors) -> Result<MirrorsWithData, Error> {
 }
 
 enum Mode {
-    Mirrors,
+    Mirrors {
+        exclusions: HashSet<Mirror>,
+    },
     Schema,
 }
 
@@ -269,7 +283,16 @@ async fn main() -> Result<(), Error> {
             bail!("program name argument missing")
         }
         match args.next().as_ref().map(|a| a.as_str()) {
-            Some("mirrors") => Mode::Mirrors,
+            Some("mirrors") => {
+                let mut exclusions = HashSet::new();
+                while let Some(arg) = args.next() {
+                    if &arg == "--exclude" {
+                        let Some(mirror) = args.next() else { break };
+                        exclusions.insert(Mirror(mirror));
+                    }
+                }
+                Mode::Mirrors { exclusions }
+            },
             Some("schema") => Mode::Schema,
             Some(_) => bail!("Unknown mode"),
             None => bail!("Pass `mirrors' or `schema' to specify mode"),
@@ -277,9 +300,9 @@ async fn main() -> Result<(), Error> {
     };
 
     match mode {
-        Mode::Mirrors => {
+        Mode::Mirrors { exclusions } => {
             let mirrors = parse_mirrors().await?;
-            let processed = process_mirrors(mirrors).await?;
+            let processed = process_mirrors(mirrors, Arc::new(exclusions)).await?;
 
             println!("{}", serde_json::to_string_pretty(&processed)?);
         }
