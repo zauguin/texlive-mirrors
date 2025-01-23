@@ -8,7 +8,7 @@ COPY Cargo.toml Cargo.toml
 RUN mkdir src && \
   echo "fn main() {panic!()}" > src/main.rs && \
   cargo build --release && \
-  rm -f src/main.rs
+  rm -f src/main.rs target/release/get-tl-mirror-status
 
 COPY . .
 
@@ -19,4 +19,4 @@ FROM scratch
 COPY --from=cargo-build /src/app/target/release/get-tl-mirror-status .
 
 USER 1000:1000
-CMD ["./get-tl-mirror-status"]
+ENTRYPOINT ["./get-tl-mirror-status"]

@@ -4,15 +4,17 @@ use parse_ctanmirrors::{Mirror, Mirrors};
 use reqwest;
 use serde::Serialize;
 use serde_json;
-use std::{collections::HashMap, io::Read, sync::Arc, time::Duration};
+use std::{collections::HashMap, io::Read, sync::Arc, time::Duration, env};
 use tokio::{
     sync::{watch, Notify},
     task::JoinSet,
     time::timeout,
+    fs,
 };
 use xz::read::XzDecoder;
 use sha2::{Digest, Sha512};
 use hex;
+use schemars::{schema_for, JsonSchema};
 
 mod parse_ctanmirrors;
 mod parse_tlpdb;
@@ -36,18 +38,31 @@ async fn parse_mirrors() -> Result<Mirrors, Error> {
     Ok(result.into())
 }
 
-#[derive(Debug, Serialize, Clone)]
+/// # Mirror status
+#[derive(Debug, Serialize, Clone, JsonSchema)]
 #[serde(tag = "status")]
 enum MirrorData {
+    /// # Dead
+    /// Mirror is unusable for some reason. This is used all general collections
+    /// for miscellaneous reasons why a mirror might be unusable.
+    /// Unknown values should be treated like `Dead'.
     Dead,
+    /// # Alive
+    /// Usable mirror with the specified TeX Live revision.
     Alive { texlive_version: u16, revision: u32 },
+    /// # Timeout
+    /// Mirror did not answer in a reasonable time.
     Timeout,
 }
-#[derive(Debug, Serialize)]
+
+/// # Map from mirror URL to mirror status
+#[derive(Debug, Serialize, JsonSchema)]
 struct CountryMirrorsWithData(HashMap<Mirror, MirrorData>);
-#[derive(Debug, Serialize)]
+/// # Map from country to corresponding mirrors
+#[derive(Debug, Serialize, JsonSchema)]
 struct ContinentMirrorsWithData(HashMap<String, CountryMirrorsWithData>);
-#[derive(Debug, Serialize)]
+/// # Map from continents to corresponding mirrors
+#[derive(Debug, Serialize, JsonSchema)]
 struct MirrorsWithData(HashMap<String, ContinentMirrorsWithData>);
 
 fn get_mirror_data_from_tlpdb(tlpdb_text: &str) -> MirrorData {
@@ -241,10 +256,36 @@ async fn process_mirrors(mirrors: Mirrors) -> Result<MirrorsWithData, Error> {
     Ok(MirrorsWithData(result))
 }
 
+enum Mode {
+    Mirrors,
+    Schema,
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Error> {
-    let mirrors = parse_mirrors().await?;
-    let processed = process_mirrors(mirrors).await?;
-    println!("{}", serde_json::to_string_pretty(&processed)?);
+    let mode = {
+        let mut args = env::args();
+        if let None = args.next() {
+            bail!("program name argument missing")
+        }
+        match args.next().as_ref().map(|a| a.as_str()) {
+            Some("mirrors") => Mode::Mirrors,
+            Some("schema") => Mode::Schema,
+            Some(_) => bail!("Unknown mode"),
+            None => bail!("Pass `mirrors' or `schema' to specify mode"),
+        }
+    };
+
+    match mode {
+        Mode::Mirrors => {
+            let mirrors = parse_mirrors().await?;
+            let processed = process_mirrors(mirrors).await?;
+
+            println!("{}", serde_json::to_string_pretty(&processed)?);
+        }
+        Mode::Schema => {
+            println!("{}", serde_json::to_string_pretty(&schema_for!(MirrorsWithData))?);
+        }
+    }
     Ok(())
 }
