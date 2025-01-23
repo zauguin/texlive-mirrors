@@ -28,7 +28,10 @@ jobs:
     steps:
       - name: Get mirror state
         run: |
-          podman run ghcr.io/zauguin/get-tl-mirror-status:get-tl-mirror-status > mirrors.json
+          podman run ghcr.io/zauguin/get-tl-mirror-status:get-tl-mirror-status mirrors > mirrors.json
+      - name: Generate schema
+        run: |
+          podman run ghcr.io/zauguin/get-tl-mirror-status:get-tl-mirror-status schema > schema.json
       - name: Generate older 'us' file
         run: |
           jq -r 'map_values(map_values(to_entries | map(.value.url = .key | .value) | [.[] | select(.status == "Alive")] | if length == 0 then [] else group_by(.texlive_version) | INDEX(.[0].texlive_version) | map_values(group_by(.revision) | INDEX(.[0].revision) | map_values(map(.url))) | to_entries | max_by(.key | tonumber).value | to_entries | max_by(.key | tonumber).value end)) | .["North America"].USA | .[]' < mirrors.json > us
