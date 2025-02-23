@@ -1,4 +1,4 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
 use nom::{
@@ -20,26 +20,26 @@ pub struct BorrowedContinentMirrors<'a>(pub HashMap<&'a str, BorrowedCountryMirr
 #[derive(Debug, PartialEq, Eq)]
 pub struct BorrowedMirrors<'a>(pub HashMap<&'a str, BorrowedContinentMirrors<'a>>);
 
-#[derive(Debug, Hash, PartialEq, Eq, Serialize)]
+#[derive(Debug, Hash, PartialEq, Eq, Serialize, Deserialize, Clone)]
 pub struct Mirror(pub String);
-#[derive(Debug, PartialEq, Eq)]
-pub struct CountryMirrors(pub HashSet<Mirror>);
-#[derive(Debug, PartialEq, Eq)]
-pub struct ContinentMirrors(pub HashMap<String, CountryMirrors>);
-#[derive(Debug, PartialEq, Eq)]
-pub struct Mirrors(pub HashMap<String, ContinentMirrors>);
+#[derive(Debug, PartialEq, Eq, Deserialize)]
+pub struct CountryMirrorList(pub HashSet<Mirror>);
+#[derive(Debug, PartialEq, Eq, Deserialize)]
+pub struct ContinentMirrorList(pub HashMap<String, CountryMirrorList>);
+#[derive(Debug, PartialEq, Eq, Deserialize)]
+pub struct MirrorList(pub HashMap<String, ContinentMirrorList>);
 
 impl<'a> From<BorrowedMirror<'a>> for Mirror {
     fn from(BorrowedMirror(value): BorrowedMirror<'a>) -> Self {
         Self(value.to_owned())
     }
 }
-impl<'a> From<BorrowedCountryMirrors<'a>> for CountryMirrors {
+impl<'a> From<BorrowedCountryMirrors<'a>> for CountryMirrorList {
     fn from(BorrowedCountryMirrors(value): BorrowedCountryMirrors<'a>) -> Self {
         Self(FromIterator::from_iter(value.into_iter().map(From::from)))
     }
 }
-impl<'a> From<BorrowedContinentMirrors<'a>> for ContinentMirrors {
+impl<'a> From<BorrowedContinentMirrors<'a>> for ContinentMirrorList {
     fn from(BorrowedContinentMirrors(value): BorrowedContinentMirrors<'a>) -> Self {
         Self(FromIterator::from_iter(
             value
@@ -48,7 +48,7 @@ impl<'a> From<BorrowedContinentMirrors<'a>> for ContinentMirrors {
         ))
     }
 }
-impl<'a> From<BorrowedMirrors<'a>> for Mirrors {
+impl<'a> From<BorrowedMirrors<'a>> for MirrorList {
     fn from(BorrowedMirrors(value): BorrowedMirrors<'a>) -> Self {
         Self(FromIterator::from_iter(
             value

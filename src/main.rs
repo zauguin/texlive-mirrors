@@ -1,10 +1,10 @@
 use anyhow::{bail, Error};
 use hex;
 use nom::Parser;
-use parse_ctanmirrors::{Mirror, Mirrors};
+use parse_ctanmirrors::{ContinentMirrorList, CountryMirrorList, Mirror, MirrorList};
 use reqwest;
 use schemars::{schema_for, JsonSchema};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json;
 use sha2::{Digest, Sha512};
 use std::{
@@ -24,6 +24,111 @@ use xz::read::XzDecoder;
 mod parse_ctanmirrors;
 mod parse_tlpdb;
 
+#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
+pub enum MirrorKind {
+    Regular,
+    Archive,
+    Pretest,
+}
+#[derive(Debug, PartialEq, Eq, Hash)]
+pub struct MirrorWithKind {
+    mirror: Mirror,
+    kind: MirrorKind,
+}
+#[derive(Debug, PartialEq, Eq)]
+pub struct CountryMirrors(pub HashMap<Mirror, MirrorKind>);
+#[derive(Debug, PartialEq, Eq)]
+pub struct ContinentMirrors(pub HashMap<String, CountryMirrors>);
+#[derive(Debug, PartialEq, Eq)]
+pub struct Mirrors(pub HashMap<String, ContinentMirrors>);
+
+fn mirrorlist_to_mirrors(
+    mirrors: MirrorList,
+    kind: MirrorKind,
+    url_transform: impl Fn(String) -> String,
+) -> Mirrors {
+    Mirrors(
+        mirrors
+            .0
+            .into_iter()
+            .map(|(continent, continent_mirrors)| {
+                (
+                    continent,
+                    ContinentMirrors(
+                        continent_mirrors
+                            .0
+                            .into_iter()
+                            .map(|(country, country_mirrors)| {
+                                (
+                                    country,
+                                    CountryMirrors(
+                                        country_mirrors
+                                            .0
+                                            .into_iter()
+                                            .map(|Mirror(mirror)| {
+                                                (Mirror(url_transform(mirror)), kind)
+                                            })
+                                            .collect(),
+                                    ),
+                                )
+                            })
+                            .collect(),
+                    ),
+                )
+            })
+            .collect(),
+    )
+}
+
+#[derive(Deserialize, Debug, Default)]
+struct SpecialMirrors {
+    pretest: Option<MirrorList>,
+    archive: Option<MirrorList>,
+}
+
+fn merge_special_mirrors(mirrors: &mut Mirrors, special_mirrors: SpecialMirrors) {
+    let SpecialMirrors { pretest, archive } = special_mirrors;
+    if let Some(pretest) = pretest {
+        for (continent, continent_mirrors) in pretest.0 {
+            let mirrors = mirrors
+                .0
+                .entry(continent)
+                .or_insert_with(|| ContinentMirrors(Default::default()));
+            for (country, country_mirrors) in continent_mirrors.0 {
+                let mirrors = mirrors
+                    .0
+                    .entry(country)
+                    .or_insert_with(|| CountryMirrors(Default::default()));
+                for mirror in country_mirrors.0 {
+                    mirrors.0.insert(mirror, MirrorKind::Pretest);
+                }
+            }
+        }
+    }
+    if let Some(archive) = archive {
+        for (continent, continent_mirrors) in archive.0 {
+            let mirrors = mirrors
+                .0
+                .entry(continent)
+                .or_insert_with(|| ContinentMirrors(Default::default()));
+            for (country, country_mirrors) in continent_mirrors.0 {
+                let mirrors = mirrors
+                    .0
+                    .entry(country)
+                    .or_insert_with(|| CountryMirrors(Default::default()));
+                for Mirror(mirror) in country_mirrors.0 {
+                    for year in 2019..2025 {
+                        mirrors.0.insert(
+                            Mirror(format!("{mirror}systems/texlive/{year}/tlnet-final/")),
+                            MirrorKind::Archive,
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
 async fn parse_mirrors() -> Result<Mirrors, Error> {
     let response = reqwest::get(
         "https://ctan.math.hamburg/systems/texlive/tlnet/tlpkg/installer/ctan-mirrors.pl",
@@ -40,7 +145,11 @@ async fn parse_mirrors() -> Result<Mirrors, Error> {
         bail!("Unexpected garbage after mirror list");
     }
 
-    Ok(result.into())
+    Ok(mirrorlist_to_mirrors(
+        result.into(),
+        MirrorKind::Regular,
+        |m| format!("{m}systems/texlive/tlnet/"),
+    ))
 }
 
 /// # Mirror status
@@ -55,12 +164,52 @@ enum MirrorData {
     /// # Alive
     /// Usable mirror with the specified TeX Live revision.
     Alive { texlive_version: u16, revision: u32 },
+    /// # Special
+    /// Variant of alive used for special mirrors which should not usually be selected
+    /// automatically.
+    Special { texlive_version: u16, revision: u32 },
     /// # Timeout
     /// Mirror did not answer in a reasonable time.
     Timeout,
     /// # Excluded
     /// Mirror is known to be unstable and therefore manually excluded.
     Excluded,
+}
+
+impl MirrorData {
+    fn with_kind(self, kind: MirrorKind) -> Self {
+        match (self, kind) {
+            (data @ (Self::Dead | Self::Timeout | Self::Excluded), _) => data,
+            (
+                Self::Alive {
+                    texlive_version,
+                    revision,
+                }
+                | Self::Special {
+                    texlive_version,
+                    revision,
+                },
+                MirrorKind::Regular,
+            ) => Self::Alive {
+                texlive_version,
+                revision,
+            },
+            (
+                Self::Alive {
+                    texlive_version,
+                    revision,
+                }
+                | Self::Special {
+                    texlive_version,
+                    revision,
+                },
+                _,
+            ) => Self::Special {
+                texlive_version,
+                revision,
+            },
+        }
+    }
 }
 
 /// # Map from mirror URL to mirror status
@@ -233,14 +382,17 @@ async fn process_mirrors(
                             let exclusions = exclusions;
                             let mappings = mappings;
                             let mirror = mirror;
-                            let tl_mirror = Mirror(format!("{}systems/texlive/tlnet/", mirror.0));
-                            if exclusions.contains(&mirror) {
+                            let (tl_mirror, mirror_kind) = mirror;
+                            if exclusions.contains(&tl_mirror) {
                                 return (tl_mirror, MirrorData::Excluded);
                             }
                             if let Ok(result) = timeout(Duration::from_secs(15), async {
                                 let hash = get_tlpdb_hash(&tl_mirror.0).await;
                                 if let Ok(hash) = hash {
-                                    mappings.by_hash(&hash, &tl_mirror.0).await
+                                    mappings
+                                        .by_hash(&hash, &tl_mirror.0)
+                                        .await
+                                        .with_kind(mirror_kind)
                                 } else {
                                     MirrorData::Dead
                                 }
@@ -277,8 +429,15 @@ async fn process_mirrors(
     Ok(MirrorsWithData(result))
 }
 
+fn parse_special_mirrors(filename: &str) -> Result<SpecialMirrors, Error> {
+    serde_json::from_str(&std::fs::read_to_string(filename)?).map_err(Into::into)
+}
+
 enum Mode {
-    Mirrors { exclusions: HashSet<Mirror> },
+    Mirrors {
+        exclusions: HashSet<Mirror>,
+        special_mirror_file: Option<String>,
+    },
     Schema,
 }
 
@@ -292,13 +451,21 @@ async fn main() -> Result<(), Error> {
         match args.next().as_ref().map(|a| a.as_str()) {
             Some("mirrors") => {
                 let mut exclusions = HashSet::new();
+                let mut special_mirror_file = None;
                 while let Some(arg) = args.next() {
                     if &arg == "--exclude" {
                         let Some(mirror) = args.next() else { break };
                         exclusions.insert(Mirror(mirror));
                     }
+                    if &arg == "--special" {
+                        let Some(special) = args.next() else { break };
+                        special_mirror_file = Some(special);
+                    }
                 }
-                Mode::Mirrors { exclusions }
+                Mode::Mirrors {
+                    exclusions,
+                    special_mirror_file,
+                }
             }
             Some("schema") => Mode::Schema,
             Some(_) => bail!("Unknown mode"),
@@ -307,8 +474,14 @@ async fn main() -> Result<(), Error> {
     };
 
     match mode {
-        Mode::Mirrors { exclusions } => {
-            let mirrors = parse_mirrors().await?;
+        Mode::Mirrors {
+            exclusions,
+            special_mirror_file,
+        } => {
+            let mut mirrors = parse_mirrors().await?;
+            if let Some(special_mirrors) = special_mirror_file {
+                merge_special_mirrors(&mut mirrors, parse_special_mirrors(&special_mirrors)?);
+            }
             let processed = process_mirrors(mirrors, Arc::new(exclusions)).await?;
 
             println!("{}", serde_json::to_string_pretty(&processed)?);
