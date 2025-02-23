@@ -32,7 +32,7 @@ jobs:
             special_mirrors.json
       - name: Get mirror state
         run: |
-          podman run ghcr.io/zauguin/get-tl-mirror-status:get-tl-mirror-status mirrors --special special_mirrors.json --exclude https://us.mirrors.cicku.me/ctan/systems/texlive/tlnet/ > mirrors.json
+          podman run -v .:/data ghcr.io/zauguin/get-tl-mirror-status:get-tl-mirror-status mirrors --special /data/special_mirrors.json --exclude https://us.mirrors.cicku.me/ctan/systems/texlive/tlnet/ > mirrors.json
       - name: Generate schema
         run: |
           podman run ghcr.io/zauguin/get-tl-mirror-status:get-tl-mirror-status schema > schema.json
