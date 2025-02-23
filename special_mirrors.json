@@ -1,0 +1,50 @@
+{
+  "pretest": {
+    "South America": {
+      "Chile": [
+        "https://ctan.dcc.uchile.cl/tlpretest/"
+      ]
+    },
+    "Asia": {
+      "China": [
+        "https://mirror.nju.edu.cn/tlpretest/",
+        "https://mirrors.tuna.tsinghua.edu.cn/tlpretest/"
+      ]
+    },
+    "Europe": {
+      "Czech Republic": [
+        "http://ftp.cstug.cz/pub/tex/local/tlpretest/"
+      ],
+      "Finland": [
+        "https://texlive.info/tlpretest/"
+      ]
+    },
+    "North America": {
+      "USA": [
+        "https://www.math.utah.edu/pub/tlpretest/"
+      ]
+    }
+  },
+  "archive": {
+    "North America": {
+      "USA": [
+        "https://ftp.math.utah.edu/pub/tex/historic/"
+      ]
+    },
+    "Europe": {
+      "Finland": [
+        "https://texlive.info/historic/"
+      ],
+      "Germany": [
+        "https://ftp.tu-chemnitz.de/pub/tug/historic/",
+        "https://pi.kwarc.info/historic/"
+      ]
+    },
+    "Asia": {
+      "China": [
+        "https://mirrors.tuna.tsinghua.edu.cn/tex-historic-archive/",
+        "https://mirror.nju.edu.cn/tex-historic/"
+      ]
+    }
+  }
+}
