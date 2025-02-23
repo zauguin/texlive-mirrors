@@ -1,19 +1,25 @@
 use anyhow::{bail, Error};
+use hex;
 use nom::Parser;
 use parse_ctanmirrors::{Mirror, Mirrors};
 use reqwest;
+use schemars::{schema_for, JsonSchema};
 use serde::Serialize;
 use serde_json;
-use std::{collections::{HashMap, HashSet}, io::Read, sync::Arc, time::Duration, env};
+use sha2::{Digest, Sha512};
+use std::{
+    collections::{HashMap, HashSet},
+    env,
+    io::Read,
+    sync::Arc,
+    time::Duration,
+};
 use tokio::{
     sync::{watch, Notify},
     task::JoinSet,
     time::timeout,
 };
 use xz::read::XzDecoder;
-use sha2::{Digest, Sha512};
-use hex;
-use schemars::{schema_for, JsonSchema};
 
 mod parse_ctanmirrors;
 mod parse_tlpdb;
@@ -68,19 +74,20 @@ struct ContinentMirrorsWithData(HashMap<String, CountryMirrorsWithData>);
 struct MirrorsWithData(HashMap<String, ContinentMirrorsWithData>);
 
 fn get_mirror_data_from_tlpdb(tlpdb_text: &str) -> MirrorData {
-    let Ok((remaining, parsed)) = parse_tlpdb::parse_entries::<nom::error::VerboseError<_>>()
-        .parse(tlpdb_text) else {
-            return MirrorData::Dead
-        };
+    let Ok((remaining, parsed)) =
+        parse_tlpdb::parse_entries::<nom::error::VerboseError<_>>().parse(tlpdb_text)
+    else {
+        return MirrorData::Dead;
+    };
     if !remaining.is_empty() {
-        return MirrorData::Dead
+        return MirrorData::Dead;
     }
     let Some(first_entry) = parsed.get(0) else {
-        return MirrorData::Dead
+        return MirrorData::Dead;
     };
     if first_entry.name != "00texlive.config" {
         eprintln!("Invalid name of first entry: {}", first_entry.name);
-        return MirrorData::Dead
+        return MirrorData::Dead;
     }
     let dependencies = &first_entry.depend;
     let mut found_release = None;
@@ -90,13 +97,13 @@ fn get_mirror_data_from_tlpdb(tlpdb_text: &str) -> MirrorData {
             if let Ok(release) = release.parse() {
                 found_release = Some(release);
             } else {
-                return MirrorData::Dead
+                return MirrorData::Dead;
             }
         } else if let Some(revision) = dependency.strip_prefix("revision/") {
             if let Ok(revision) = revision.parse() {
                 found_revision = Some(revision);
             } else {
-                return MirrorData::Dead
+                return MirrorData::Dead;
             }
         }
     }
@@ -197,7 +204,10 @@ async fn get_tlpdb(mirror: &str) -> Result<String, Error> {
     Ok(response_text)
 }
 
-async fn process_mirrors(mirrors: Mirrors, exclusions: Arc<HashSet<Mirror>>) -> Result<MirrorsWithData, Error> {
+async fn process_mirrors(
+    mirrors: Mirrors,
+    exclusions: Arc<HashSet<Mirror>>,
+) -> Result<MirrorsWithData, Error> {
     let mappings = Arc::new(TlpdbByHash::new());
     let mut continent_set: JoinSet<Result<(String, ContinentMirrorsWithData), Error>> =
         JoinSet::new();
@@ -225,7 +235,7 @@ async fn process_mirrors(mirrors: Mirrors, exclusions: Arc<HashSet<Mirror>>) -> 
                             let mirror = mirror;
                             let tl_mirror = Mirror(format!("{}systems/texlive/tlnet/", mirror.0));
                             if exclusions.contains(&mirror) {
-                                return (tl_mirror, MirrorData::Excluded)
+                                return (tl_mirror, MirrorData::Excluded);
                             }
                             if let Ok(result) = timeout(Duration::from_secs(15), async {
                                 let hash = get_tlpdb_hash(&tl_mirror.0).await;
@@ -268,9 +278,7 @@ async fn process_mirrors(mirrors: Mirrors, exclusions: Arc<HashSet<Mirror>>) -> 
 }
 
 enum Mode {
-    Mirrors {
-        exclusions: HashSet<Mirror>,
-    },
+    Mirrors { exclusions: HashSet<Mirror> },
     Schema,
 }
 
@@ -291,7 +299,7 @@ async fn main() -> Result<(), Error> {
                     }
                 }
                 Mode::Mirrors { exclusions }
-            },
+            }
             Some("schema") => Mode::Schema,
             Some(_) => bail!("Unknown mode"),
             None => bail!("Pass `mirrors' or `schema' to specify mode"),
@@ -306,7 +314,10 @@ async fn main() -> Result<(), Error> {
             println!("{}", serde_json::to_string_pretty(&processed)?);
         }
         Mode::Schema => {
-            println!("{}", serde_json::to_string_pretty(&schema_for!(MirrorsWithData))?);
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&schema_for!(MirrorsWithData))?
+            );
         }
     }
     Ok(())
