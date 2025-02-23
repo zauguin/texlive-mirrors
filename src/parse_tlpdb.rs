@@ -4,7 +4,7 @@ use nom::{
     character::complete,
     combinator::{eof, map, map_opt, recognize},
     error::ParseError,
-    multi::{many0, many0_count, many1, many1_count, many_till},
+    multi::{many0, many0_count, many1_count, many_till},
     sequence::{delimited, pair, preceded, separated_pair, terminated, tuple},
     Parser,
 };

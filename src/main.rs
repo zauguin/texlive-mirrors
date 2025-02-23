@@ -9,7 +9,6 @@ use tokio::{
     sync::{watch, Notify},
     task::JoinSet,
     time::timeout,
-    fs,
 };
 use xz::read::XzDecoder;
 use sha2::{Digest, Sha512};
