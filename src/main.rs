@@ -117,7 +117,7 @@ fn merge_special_mirrors(mirrors: &mut Mirrors, special_mirrors: SpecialMirrors)
                     .entry(country)
                     .or_insert_with(|| CountryMirrors(Default::default()));
                 for Mirror(mirror) in country_mirrors.0 {
-                    for year in 2019..2025 {
+                    for year in 2013..2025 {
                         mirrors.0.insert(
                             Mirror(format!("{mirror}systems/texlive/{year}/tlnet-final/")),
                             MirrorKind::Archive,
